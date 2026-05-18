@@ -43,6 +43,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --parameters 'commands=[
               "cd /home/ec2-user/frontend",
+              "echo EC2_BACK_PRIVATE_IP=${{ secrets.EC2_BACK_PRIVATE_IP }} > .env",
               "docker compose pull",
               "docker compose down",
               "docker compose up -d",
