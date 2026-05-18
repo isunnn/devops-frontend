@@ -1,7 +1,9 @@
 services:
   frontend:
-    build: .
+    image: aylinne/frontend-despacho:latest
     container_name: frontend-despacho
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     restart: unless-stopped
