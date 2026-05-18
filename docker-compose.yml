@@ -1,7 +1,9 @@
 services:
   frontend:
-    build: .
+    image: aylinne/frontend-despacho:latest
     container_name: frontend-despacho
     ports:
       - "8080:8080"
+    environment:
+      - EC2_BACK_PRIVATE_IP=10.0.2.94
     restart: unless-stopped
