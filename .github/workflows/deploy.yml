@@ -1,51 +1,67 @@
-name: CI/CD - Frontend Despacho
+name: Deploy Frontend a ECS
 
 on:
   push:
-    branches:
-      - deploy
+    branches: [deploy]
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: despacho-cluster-devops
 
 jobs:
   build-and-deploy:
+    name: Frontend - Build, Push y Deploy
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout del código
+
+      - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: Login a Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build y Push imagen Frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/frontend-despacho:latest
-          build-args: |
-            VITE_API_URL=${{ secrets.VITE_API_URL }}
-
-      - name: Configurar AWS Credentials
+      - name: Configurar credenciales AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy usando SSM
+      - name: Login a Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag y push imagen Frontend
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: despacho-frontend
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          aws ssm send-command \
-            --instance-ids "${{ secrets.EC2_FRONT_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "cd /home/ec2-user/frontend",
-              "echo EC2_BACK_PRIVATE_IP=${{ secrets.EC2_BACK_PRIVATE_IP }} > .env",
-              "docker compose pull",
-              "docker compose down",
-              "docker compose up -d",
-              "docker image prune -f"
-            ]'
+          docker build \
+            --build-arg VITE_API_URL=${{ vars.VITE_API_URL }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Descargar Task Definition actual - Frontend
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition despacho-frontend \
+            --query taskDefinition > task-def-frontend.json
+
+      - name: Actualizar imagen en Task Definition - Frontend
+        id: render-frontend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def-frontend.json
+          container-name: frontend
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy a ECS - Frontend
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
+          service: frontend-service
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
